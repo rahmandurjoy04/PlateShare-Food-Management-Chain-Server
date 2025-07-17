@@ -4,10 +4,13 @@ require('dotenv').config();
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const admin = require('firebase-admin');
 
-const serviceAccount = require("path/to/serviceAccountKey.json");
+
+// Need to be deleted
+const path = require("path");
+const serviceAccount = require(path.resolve(__dirname, "firebase-adminsdk.json"));
 
 admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount)
+    credential: admin.credential.cert(serviceAccount)
 });
 
 
@@ -45,17 +48,31 @@ async function run() {
 
         // Creating a new user
 
-        // GET API to retrieve all users
+        // GET /users or /users?email=someone@example.com
         app.get('/users', async (req, res) => {
+            const email = req.query.email;
+
             try {
-                // Fetch all users
-                const users = await usersCollection.find({}).toArray();
-                res.status(200).json({ message: 'Users retrieved successfully', users });
+                if (email) {
+                    // Fetch single user by email
+                    const user = await usersCollection.findOne({ email });
+
+                    if (!user) {
+                        return res.status(404).json({ message: 'User not found' });
+                    }
+
+                    return res.status(200).json(user);
+                } else {
+                    // Fetch all users
+                    const users = await usersCollection.find({}).toArray();
+                    return res.status(200).json({ message: 'Users retrieved successfully', users });
+                }
             } catch (error) {
-                console.error('Error retrieving users:', error);
+                console.error('Error retrieving user(s):', error);
                 res.status(500).json({ message: 'Server error', error: error.message });
             }
         });
+
 
 
         // POST API to save user
@@ -96,8 +113,6 @@ async function run() {
             try {
                 const { id } = req.params;
                 const { role } = req.body;
-                console.log(id);
-                console.log(role);
 
                 // Validate role
                 if (!['admin', 'restaurant', 'charity', 'user'].includes(role)) {
