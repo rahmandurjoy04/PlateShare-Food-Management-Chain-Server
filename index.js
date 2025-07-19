@@ -94,6 +94,23 @@ async function run() {
             }
         });
 
+        // GET all or filtered role requests
+        app.get('/allRoleRequests', async (req, res) => {
+            try {
+                const email = req.query.email;
+                let query = {};
+                if (email) {
+                    query.email = email;
+                }
+                const roleRequests = await roleRequestCollection.find(query).toArray();
+                res.status(200).json(roleRequests);
+            } catch (error) {
+                console.error('Error retrieving role requests:', error);
+                res.status(500).json({ message: 'Server error', error: error.message });
+            }
+        });
+
+
 
 
         // POST API to save user
@@ -246,7 +263,50 @@ async function run() {
             }
         });
 
+        // // PATCH role request status (approve or reject)
+        app.patch('/roleRequests/:id', async (req, res) => {
+            const { id } = req.params;
+            const { status } = req.body;
 
+            if (!['approved', 'rejected'].includes(status)) {
+                return res.status(400).json({ message: 'Invalid status. Must be "approved" or "rejected"' });
+            }
+
+            try {
+                // Find existing role request
+                const roleRequest = await roleRequestCollection.findOne({ _id: new ObjectId(id) });
+                if (!roleRequest) {
+                    return res.status(404).json({ message: 'Role request not found' });
+                }
+
+                // Update the role request status
+                const updateResult = await roleRequestCollection.updateOne(
+                    { _id: new ObjectId(id) },
+                    { $set: { charity_role_status: status } }
+                );
+
+                // If approved, update user role to 'charity'
+                if (status === 'approved') {
+                    await usersCollection.updateOne(
+                        { email: roleRequest.email },
+                        { $set: { role: 'charity' } }
+                    );
+                }
+
+                // Fetch the updated role request document
+                const updatedRequest = await roleRequestCollection.findOne({ _id: new ObjectId(id) });
+
+                // Respond with message and updated document
+                return res.status(200).json({
+                    message: `Role request has been ${status} successfully.`,
+                    modifiedCount: updateResult.modifiedCount,
+                    updatedRequest,
+                });
+            } catch (error) {
+                console.error('Error updating role request:', error);
+                res.status(500).json({ message: 'Server error', error: error.message });
+            }
+        });
 
         // DELETE API to delete user
         app.delete('/users/:id', async (req, res) => {
