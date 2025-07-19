@@ -44,7 +44,7 @@ async function run() {
         //*All Codes Come here*//
         const db = client.db('PlateShare_DB_Admin');
         const usersCollection = db.collection('users');//Users with their role
-        const charityCollection = db.collection('charity');//Charity that are beimg done
+        const resturantDonationsCollection = db.collection('resturantDonations');//Donations by resturant that are being made
         const roleRequestCollection = db.collection('roleRequests');
         const transactionsCollection = db.collection('transactions');
 
@@ -200,6 +200,27 @@ async function run() {
                 res.status(500).json({ error: 'Failed to save Transactions.' });
             }
         });
+
+// Creation of donation by resturant
+        app.post('/donations', async (req, res) => {
+            try {
+                const donation = req.body;
+
+                donation.createdAt = new Date();
+                donation.status = donation.status || 'pending';
+
+                const result = await resturantDonationsCollection.insertOne(donation);
+
+                res.status(201).json({
+                    message: 'Donation added successfully',
+                    insertedId: result.insertedId
+                });
+            } catch (error) {
+                console.error('Error adding donation:', error);
+                res.status(500).json({ message: 'Server error', error: error.message });
+            }
+        });
+
 
 
         // PATCH user by email to update last login (and optionally name/photo)
