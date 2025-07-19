@@ -4,6 +4,7 @@ require('dotenv').config();
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const admin = require('firebase-admin');
 
+const stripe = require("stripe")(process.env.Payment_GateWay_Key);
 
 // Need to be deleted
 const path = require("path");
@@ -44,7 +45,8 @@ async function run() {
         const db = client.db('PlateShare_DB_Admin');
         const usersCollection = db.collection('users');//Users with their role
         const charityCollection = db.collection('charity');//Charity that are beimg done
-        const paymentCollection = db.collection('payments');
+        const roleRequestCollection = db.collection('roleRequests');
+        const transactionsCollection = db.collection('transactions');
 
         // Creating a new user
 
@@ -78,7 +80,7 @@ async function run() {
         // POST API to save user
         app.post('/users', async (req, res) => {
             try {
-                const { name, email, photo, role, created_at, last_login_at } = req.body;
+                const { name, email, photo, role, created_at, last_login_at, firebaseUid } = req.body;
 
 
                 // Check if user already exists
@@ -93,6 +95,7 @@ async function run() {
                     email,
                     photo,
                     role,
+                    firebaseUid,
                     created_at,
                     last_login_at,
                 };
@@ -106,6 +109,94 @@ async function run() {
                 res.status(500).json({ message: 'Server error', error: error.message });
             }
         });
+
+        // Post api for payment intent
+        app.post('/create-payment-intent', async (req, res) => {
+            try {
+                const { amount } = req.body;
+
+                if (!amount || typeof amount !== 'number') {
+                    return res.status(400).json({ error: 'Invalid or missing amount.' });
+                }
+
+                const paymentIntent = await stripe.paymentIntents.create({
+                    amount: Math.round(amount),
+                    currency: 'usd',
+                    payment_method_types: ['card'],
+                });
+
+                res.send({ clientSecret: paymentIntent.client_secret });
+            } catch (error) {
+                console.error('Error creating payment intent:', error);
+                res.status(500).json({ error: 'Failed to create payment intent.' });
+            }
+        });
+
+
+// Posting the roleReques data in db
+        app.post('/roleRequest', async (req, res) => {
+            try {
+                const request = req.body;
+
+                console.log(request);
+
+                if (!request.transactionId || !request.amount) {
+                    return res.status(400).json({ error: 'Missing payment data.' });
+                }
+
+                const result = await roleRequestCollection.insertOne(request);
+                res.status(201).json({ message: 'Payment saved successfully', result });
+            } catch (error) {
+                console.error('Error saving payment:', error);
+                res.status(500).json({ error: 'Failed to save payment.' });
+            }
+        });
+
+        // Saving the transactions data
+        app.post('/transactions', async (req, res) => {
+            try {
+                const transaction_data = req.body;
+
+                const result = await transactionsCollection.insertOne(transaction_data);
+                res.status(201).json({ message: 'Transactions saved successfully', result });
+            } catch (error) {
+                console.error('Error saving Transactions:', error);
+                res.status(500).json({ error: 'Failed to save Transactions.' });
+            }
+        });
+
+
+        // PATCH user by email to update last login (and optionally name/photo)
+        app.patch('/users', async (req, res) => {
+            try {
+                const email = req.query.email;
+                const { last_login_at, name, photo, role } = req.body;
+
+                const updateDoc = {
+                    $set: {
+                        last_login_at,
+                        role,
+                        ...(name && { name }),
+                        ...(photo && { photo })
+                    }
+                };
+
+                const result = await usersCollection.updateOne(
+                    { email },
+                    updateDoc
+                );
+
+                if (result.matchedCount === 0) {
+                    return res.status(404).json({ message: 'User not found' });
+                }
+
+                res.status(200).json({ message: 'User login time updated successfully' });
+            } catch (error) {
+                console.error('Error updating user login:', error);
+                res.status(500).json({ message: 'Server error', error: error.message });
+            }
+        });
+
 
 
         // PATCH API to update user role
@@ -135,6 +226,8 @@ async function run() {
                 res.status(500).json({ message: 'Server error', error: error.message });
             }
         });
+
+
 
         // DELETE API to delete user
         app.delete('/users/:id', async (req, res) => {
