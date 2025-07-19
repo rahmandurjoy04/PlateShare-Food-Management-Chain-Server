@@ -76,6 +76,25 @@ async function run() {
         });
 
 
+        // GET all or filtered role requests
+        app.get('/roleRequests', async (req, res) => {
+            try {
+                const email = req.query.email;
+
+                let query = {};
+                if (email) {
+                    query.email = email;
+                }
+
+                const roleRequests = await roleRequestCollection.findOne(query);
+                res.status(200).json(roleRequests);
+            } catch (error) {
+                console.error('Error retrieving role requests:', error);
+                res.status(500).json({ message: 'Server error', error: error.message });
+            }
+        });
+
+
 
         // POST API to save user
         app.post('/users', async (req, res) => {
@@ -133,7 +152,7 @@ async function run() {
         });
 
 
-// Posting the roleReques data in db
+        // Posting the roleReques data in db
         app.post('/roleRequest', async (req, res) => {
             try {
                 const request = req.body;
