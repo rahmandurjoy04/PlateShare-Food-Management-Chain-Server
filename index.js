@@ -45,6 +45,7 @@ async function run() {
         const db = client.db('PlateShare_DB_Admin');
         const usersCollection = db.collection('users');//Users with their role
         const resturantDonationsCollection = db.collection('resturantDonations');//Donations by resturant that are being made
+        const charityPickupRequestsCollection = db.collection('charityRequests');//Request from a charity to make a delivery or pickup
         const roleRequestCollection = db.collection('roleRequests');
         const transactionsCollection = db.collection('transactions');
 
@@ -173,6 +174,18 @@ async function run() {
             }
         });
 
+        // Showing All Pickup requests by  charities
+        app.get('/donation-requests', async (req, res) => {
+            try {
+                const requests = await charityPickupRequestsCollection.find().toArray();
+                res.status(200).json(requests);
+            } catch (error) {
+                res.status(500).json({ message: 'Failed to fetch donation requests', error: error.message });
+            }
+        });
+
+
+
 
 
 
@@ -283,6 +296,24 @@ async function run() {
                 res.status(500).json({ message: 'Server error', error: error.message });
             }
         });
+
+
+        // Requests By Charity done to make a donation Pickup
+        app.post('/donation-requests', async (req, res) => {
+            try {
+                const request = req.body;
+                const result = await charityPickupRequestsCollection.insertOne({
+                    ...request,
+                    status: 'Pending',
+                    delivery_status: 'Requested',
+                    createdAt: new Date().toISOString(),
+                });
+                res.status(201).json({ message: 'Request submitted', insertedId: result.insertedId });
+            } catch (error) {
+                res.status(500).json({ message: 'Failed to submit request', error: error.message });
+            }
+        });
+
 
 
 
@@ -447,7 +478,13 @@ async function run() {
             try {
                 const result = await resturantDonationsCollection.updateOne(
                     { _id: new ObjectId(id) },
-                    { $set: { status, updatedAt: new Date().toISOString() } }
+                    {
+                        $set: {
+                            status,
+                            delivery_status: 'Available',
+                            updatedAt: new Date().toISOString()
+                        }
+                    }
                 );
                 res.status(200).json({ message: `Donation ${status}`, modifiedCount: result.modifiedCount });
             } catch (error) {
