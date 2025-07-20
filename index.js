@@ -110,6 +110,17 @@ async function run() {
             }
         });
 
+        app.get('/donations', async (req, res) => {
+            try {
+                const donations = await resturantDonationsCollection.find({}).toArray();
+                res.status(200).json(donations);
+            } catch (error) {
+                console.error('Error fetching donations:', error);
+                res.status(500).json({ message: 'Failed to fetch donations', error: error.message });
+            }
+        });
+
+
         // GET: My Donations
         app.get('/donations/my-donations', async (req, res) => {
             const email = req.query.email;
@@ -380,7 +391,6 @@ async function run() {
                     return res.status(404).json({ message: 'Donation not found' });
                 }
 
-                // Check if actual donation fields changed (excluding updatedAt)
                 const changedFields = {};
                 const fieldsToCheck = ['title', 'foodType', 'quantity', 'pickupTime', 'location', 'image'];
 
@@ -413,6 +423,21 @@ async function run() {
             } catch (error) {
                 console.error('Update error:', error);
                 res.status(500).json({ message: 'Server error', error: error.message });
+            }
+        });
+
+
+        app.patch('/donations/:id/status', async (req, res) => {
+            const { id } = req.params;
+            const { status } = req.body;
+            try {
+                const result = await resturantDonationsCollection.updateOne(
+                    { _id: new ObjectId(id) },
+                    { $set: { status, updatedAt: new Date().toISOString() } }
+                );
+                res.status(200).json({ message: `Donation ${status}`, modifiedCount: result.modifiedCount });
+            } catch (error) {
+                res.status(500).json({ message: 'Failed to update status', error: error.message });
             }
         });
 
