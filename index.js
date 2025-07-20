@@ -151,9 +151,6 @@ async function run() {
 
 
 
-
-
-
         // POST API to save user
         app.post('/users', async (req, res) => {
             try {
@@ -369,6 +366,58 @@ async function run() {
                 res.status(500).json({ message: 'Server error', error: error.message });
             }
         });
+
+        // PATCH update donation by ID
+        app.patch('/donations/:id', async (req, res) => {
+            const { id } = req.params;
+            const newData = req.body;
+
+            try {
+                const filter = { _id: new ObjectId(id) };
+                const existing = await resturantDonationsCollection.findOne(filter);
+
+                if (!existing) {
+                    return res.status(404).json({ message: 'Donation not found' });
+                }
+
+                // Check if actual donation fields changed (excluding updatedAt)
+                const changedFields = {};
+                const fieldsToCheck = ['title', 'foodType', 'quantity', 'pickupTime', 'location', 'image'];
+
+                let hasChanges = false;
+
+                for (const field of fieldsToCheck) {
+                    if (newData[field] !== existing[field]) {
+                        changedFields[field] = newData[field];
+                        hasChanges = true;
+                    }
+                }
+
+                if (!hasChanges) {
+                    return res.status(200).json({ message: 'No meaningful changes made', modified: false });
+                }
+
+                const updateDoc = {
+                    $set: {
+                        ...changedFields,
+                        updatedAt: new Date().toISOString(),
+                    },
+                };
+
+                const result = await resturantDonationsCollection.updateOne(filter, updateDoc);
+
+                res.status(200).json({
+                    message: 'Donation updated successfully',
+                    modifiedCount: result.modifiedCount
+                });
+            } catch (error) {
+                console.error('Update error:', error);
+                res.status(500).json({ message: 'Server error', error: error.message });
+            }
+        });
+
+
+
 
         // DELETE API to delete user
         app.delete('/users/:id', async (req, res) => {
