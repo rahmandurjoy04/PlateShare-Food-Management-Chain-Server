@@ -175,10 +175,17 @@ async function run() {
             }
         });
 
-        // Showing All Pickup requests by  charities
         app.get('/donation-requests', async (req, res) => {
             try {
-                const requests = await charityPickupRequestsCollection.find().toArray();
+                const email = req.query.email; // get email query param
+
+                let query = {};
+                if (email) {
+                    query.charityEmail = email;  // filter by charityEmail if email is provided
+                }
+
+                const requests = await charityPickupRequestsCollection.find(query).toArray();
+
                 res.status(200).json(requests);
             } catch (error) {
                 res.status(500).json({ message: 'Failed to fetch donation requests', error: error.message });
@@ -186,6 +193,19 @@ async function run() {
         });
 
 
+        // Getting Featured Donations
+        app.get('/featuredDonations', async (req, res) => {
+            try {
+                const featuredDonations = await resturantDonationsCollection
+                    .find({ featured: true })
+                    .sort({ featuredAt: -1 })
+                    .toArray();
+
+                res.status(200).json(featuredDonations);
+            } catch (error) {
+                res.status(500).json({ message: 'Failed to fetch featured donations', error: error.message });
+            }
+        });
 
 
 
@@ -519,6 +539,45 @@ async function run() {
         });
 
 
+        // Accepting Requests from Resturant To charity 
+        app.patch('/donation-requests/status/:id', async (req, res) => {
+            const requestId = req.params.id;
+            const { status, donationId } = req.body;
+            if (!['Accepted', 'Rejected'].includes(status)) {
+                return res.status(400).json({ message: 'Invalid status value.' });
+            }
+
+            try {
+                // Update the selected request's status
+                const result = await charityPickupRequestsCollection.updateOne(
+                    { _id: new ObjectId(requestId) },
+                    { $set: { status } }
+                );
+
+                // If accepted, reject other requests for the same donation
+                if (status === 'Accepted' && donationId) {
+                    await charityPickupRequestsCollection.updateMany(
+                        {
+                            donationId,
+                            _id: { $ne: new ObjectId(requestId) },
+                            status: 'Pending'
+                        },
+                        { $set: { status: 'Rejected' } }
+                    );
+                }
+
+                res.status(200).json({
+                    message: `Request ${status.toLowerCase()} successfully.`,
+                    matchedCount: result.matchedCount,
+                    modifiedCount: result.modifiedCount
+                });
+            } catch (error) {
+                res.status(500).json({ message: 'Failed to update request status', error: error.message });
+            }
+        });
+
+
+
 
         // DELETE API to delete user
         app.delete('/users/:id', async (req, res) => {
@@ -584,6 +643,41 @@ async function run() {
             }
         });
 
+
+        // Delete charity Requests Made by Charity
+        app.delete('/donation-requests/:id', async (req, res) => {
+            const requestId = req.params.id;
+            const charityEmail = req.query.charityEmail;
+
+            if (!charityEmail) {
+                return res.status(400).json({ message: 'Charity email is required' });
+            }
+
+            try {
+                // Find the request first
+                const existingRequest = await charityPickupRequestsCollection.findOne({ _id: new ObjectId(requestId) });
+
+                if (!existingRequest) {
+                    return res.status(404).json({ message: 'Request not found' });
+                }
+
+                if (existingRequest.charityEmail !== charityEmail) {
+                    return res.status(403).json({ message: 'Unauthorized: Email does not match' });
+                }
+
+                // If email matches, proceed to delete
+                const result = await charityPickupRequestsCollection.deleteOne({ _id: new ObjectId(requestId) });
+
+                if (result.deletedCount === 1) {
+                    res.status(200).json({ message: 'Request cancelled successfully' });
+                } else {
+                    res.status(500).json({ message: 'Failed to delete request' });
+                }
+            } catch (error) {
+                console.error('Error cancelling request:', error);
+                res.status(500).json({ message: 'Server error', error: error.message });
+            }
+        });
 
 
 
