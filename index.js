@@ -110,6 +110,28 @@ async function run() {
             }
         });
 
+        // GET: My Donations
+        app.get('/donations/my-donations', async (req, res) => {
+            const email = req.query.email;
+
+            if (!email) {
+                return res.status(400).json({ message: 'Email query is required' });
+            }
+
+            try {
+                const myDonations = await resturantDonationsCollection
+                    .find({ restaurantEmail: email })
+                    .sort({ createdAt: -1 })
+                    .toArray();
+
+                res.status(200).json({ message: 'Donations fetched successfully', donations: myDonations });
+            } catch (error) {
+                console.error('Error fetching donations:', error);
+                res.status(500).json({ message: 'Server error', error: error.message });
+            }
+        });
+
+
 
 
 
@@ -201,7 +223,7 @@ async function run() {
             }
         });
 
-// Creation of donation by resturant
+        // Creation of donation by resturant
         app.post('/donations', async (req, res) => {
             try {
                 const donation = req.body;
