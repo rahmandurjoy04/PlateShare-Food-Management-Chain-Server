@@ -177,7 +177,7 @@ async function run() {
 
         app.get('/donation-requests', async (req, res) => {
             try {
-                const email = req.query.email; // get email query param
+                const email = req.query.email;
 
                 let query = {};
                 if (email) {
@@ -204,6 +204,72 @@ async function run() {
                 res.status(200).json(featuredDonations);
             } catch (error) {
                 res.status(500).json({ message: 'Failed to fetch featured donations', error: error.message });
+            }
+        });
+
+        // GET confirmed pickups by charity
+        app.get('/pickups', async (req, res) => {
+            const charityEmail = req.query.email;
+
+            const query = {};
+            if (charityEmail) {
+                query.charityEmail = charityEmail;
+            }
+
+            query.status = 'Accepted'; // Only show confirmed pickups
+
+            try {
+                const pickups = await charityPickupRequestsCollection.find(query).toArray();
+                res.status(200).json(pickups);
+            } catch (error) {
+                res.status(500).json({
+                    message: 'Failed to fetch pickups',
+                    error: error.message
+                });
+            }
+        });
+
+
+        // Received or completed Deliveries For Charity
+        app.get('/received-donations', async (req, res) => {
+            const charityEmail = req.query.email;
+
+            if (!charityEmail) {
+                return res.status(400).json({ message: 'Charity email is required as query parameter' });
+            }
+
+            try {
+                // 1. Find all charity pickup requests with status "Picked Up" for this charity
+                const pickupRequests = await charityPickupRequestsCollection
+                    .find({ charityEmail, status: 'Picked Up' })
+                    .toArray();
+
+                // 2. Extract donationIds from these requests
+                const donationIds = pickupRequests.map(req => new ObjectId(req.donationId));
+
+                // 3. Fetch all related donations from resturantDonationsCollection
+                const donations = await resturantDonationsCollection
+                    .find({ _id: { $in: donationIds }, delivery_status: 'Picked Up' }) // Optional: filter by delivery_status if needed
+                    .toArray();
+
+                // 4. Merge pickup requests with donation details
+                const combined = pickupRequests.map(req => {
+                    const donation = donations.find(d => d._id.toString() === req.donationId);
+                    return {
+                        ...req,
+                        donationTitle: req.donationTitle || donation?.title,
+                        restaurantName: req.restaurantName || donation?.restaurantName,
+                        foodType: donation?.foodType,
+                        quantity: donation?.quantity,
+                        pickupTime: donation?.pickupTime,
+                        deliveryStatus: donation?.delivery_status,
+                    };
+                });
+
+                res.status(200).json(combined);
+            } catch (error) {
+                console.error('Error fetching received donations:', error);
+                res.status(500).json({ message: 'Failed to fetch received donations', error: error.message });
             }
         });
 
@@ -543,19 +609,21 @@ async function run() {
         app.patch('/donation-requests/status/:id', async (req, res) => {
             const requestId = req.params.id;
             const { status, donationId } = req.body;
+
             if (!['Accepted', 'Rejected'].includes(status)) {
                 return res.status(400).json({ message: 'Invalid status value.' });
             }
 
             try {
-                // Update the selected request's status
+                // 1. Update the selected request's status
                 const result = await charityPickupRequestsCollection.updateOne(
                     { _id: new ObjectId(requestId) },
                     { $set: { status } }
                 );
 
-                // If accepted, reject other requests for the same donation
+                // 2. If Accepted:
                 if (status === 'Accepted' && donationId) {
+                    // a. Reject other requests
                     await charityPickupRequestsCollection.updateMany(
                         {
                             donationId,
@@ -564,6 +632,12 @@ async function run() {
                         },
                         { $set: { status: 'Rejected' } }
                     );
+
+                    // b. Update delivery_status of the donation
+                    await resturantDonationsCollection.updateOne(
+                        { _id: new ObjectId(donationId) },
+                        { $set: { delivery_status: 'Requested' } }
+                    );
                 }
 
                 res.status(200).json({
@@ -571,8 +645,56 @@ async function run() {
                     matchedCount: result.matchedCount,
                     modifiedCount: result.modifiedCount
                 });
+
             } catch (error) {
+                console.error('Error updating request status:', error);
                 res.status(500).json({ message: 'Failed to update request status', error: error.message });
+            }
+        });
+
+
+        // Make donation as picked up bu Charity
+        app.patch('/donations/:id/pickup', async (req, res) => {
+            const donationId = req.params.id;
+
+            try {
+                // 1. Update the donation's delivery_status to "Picked Up"
+                const donationResult = await resturantDonationsCollection.updateOne(
+                    { _id: new ObjectId(donationId) },
+                    { $set: { delivery_status: 'Picked Up' } }
+                );
+
+                // 2. Update all accepted pickup requests for this donation to "Picked Up"
+                const acceptedUpdateResult = await charityPickupRequestsCollection.updateMany(
+                    {
+                        donationId,
+                        status: 'Accepted'
+                    },
+                    { $set: { status: 'Picked Up' } }
+                );
+
+                // 3. Reject all other pending pickup requests for this donation
+                const rejectedUpdateResult = await charityPickupRequestsCollection.updateMany(
+                    {
+                        donationId,
+                        status: 'Pending'
+                    },
+                    { $set: { status: 'Rejected' } }
+                );
+
+                res.status(200).json({
+                    message: 'Donation marked as Picked Up; accepted requests updated; pending requests rejected.',
+                    updatedDonation: donationResult.modifiedCount,
+                    acceptedRequestsUpdated: acceptedUpdateResult.modifiedCount,
+                    pendingRequestsRejected: rejectedUpdateResult.modifiedCount
+                });
+
+            } catch (error) {
+                console.error('Error in pickup confirmation:', error);
+                res.status(500).json({
+                    message: 'Failed to confirm pickup',
+                    error: error.message
+                });
             }
         });
 
