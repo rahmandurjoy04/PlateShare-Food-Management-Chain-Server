@@ -131,6 +131,25 @@ async function run() {
             }
         });
 
+        // Get donation by ID
+        app.get('/donations/:id', async (req, res) => {
+            const { id } = req.params;
+
+            try {
+                const donation = await resturantDonationsCollection.findOne({ _id: new ObjectId(id) });
+
+                if (donation) {
+                    res.status(200).json(donation);
+                } else {
+                    res.status(404).json({ message: 'Donation not found' });
+                }
+            } catch (error) {
+                console.error('Error fetching donation:', error);
+                res.status(500).json({ message: 'Server error' });
+            }
+        });
+
+
 
 
 
@@ -376,6 +395,31 @@ async function run() {
                 res.status(500).send({ error: error.message });
             }
         });
+
+
+        // Delete donation by ID and email
+        app.delete('/donations/:id', async (req, res) => {
+            const donationId = req.params.id;
+
+            console.log(donationId);
+
+            try {
+                const result = await resturantDonationsCollection.deleteOne({
+                    _id: new ObjectId(donationId),
+                });
+
+                if (result.deletedCount === 1) {
+                    res.status(200).json({ message: 'Donation deleted successfully' });
+                } else {
+                    res.status(404).json({ message: 'Donation not found or not owned by this user' });
+                }
+            } catch (error) {
+                console.error('Delete error:', error);
+                res.status(500).json({ message: 'Server error' });
+            }
+        });
+
+
 
 
 
