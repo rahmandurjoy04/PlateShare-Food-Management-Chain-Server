@@ -160,6 +160,20 @@ async function run() {
             }
         });
 
+        app.get('/alldonations/verified', async (req, res) => {
+            try {
+                const verifiedDonations = await resturantDonationsCollection
+                    .find({ status: 'Verified' })
+                    .toArray();
+
+                res.status(200).json(verifiedDonations);
+            } catch (error) {
+                console.error('Error fetching verified donations:', error);
+                res.status(500).json({ message: 'Failed to fetch verified donations', error: error.message });
+            }
+        });
+
+
 
 
         // POST API to save user
