@@ -111,6 +111,7 @@ async function run() {
             }
         });
 
+        // Getting All Donations
         app.get('/donations', async (req, res) => {
             try {
                 const donations = await resturantDonationsCollection.find({}).toArray();
@@ -493,6 +494,30 @@ async function run() {
         });
 
 
+        // Addng featured Field When Admin Clicks Feature
+        app.patch('/donations/:id/feature', async (req, res) => {
+            try {
+                const { id } = req.params;
+                const result = await resturantDonationsCollection.updateOne(
+                    { _id: new ObjectId(id) },
+                    {
+                        $set: {
+                            featured: true,
+                            featuredAt: new Date().toISOString()  // Add this field instead of updatedAt
+                        }
+                    }
+                );
+
+                if (result.modifiedCount === 1) {
+                    res.status(200).json({ message: 'Donation marked as featured' });
+                } else {
+                    res.status(404).json({ message: 'Donation not found or already featured' });
+                }
+            } catch (error) {
+                res.status(500).json({ message: 'Failed to update donation', error: error.message });
+            }
+        });
+
 
 
         // DELETE API to delete user
@@ -543,6 +568,22 @@ async function run() {
                 res.status(500).json({ message: 'Server error' });
             }
         });
+
+
+        // DELETE a specific donation request by ID from admin
+        app.delete('/donation-requests/:id', async (req, res) => {
+            try {
+                const { id } = req.params;
+                const result = await charityPickupRequestsCollection.deleteOne({ _id: new ObjectId(id) });
+                res.status(200).json({
+                    message: 'Request deleted successfully',
+                    deletedCount: result.deletedCount,
+                });
+            } catch (error) {
+                res.status(500).json({ message: 'Failed to delete request', error: error.message });
+            }
+        });
+
 
 
 
