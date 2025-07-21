@@ -41,6 +41,7 @@ async function run() {
         // Connect the client to the server	(optional starting in v4.7)
         await client.connect();
 
+
         //*All Codes Come here*//
         const db = client.db('PlateShare_DB_Admin');
         const usersCollection = db.collection('users');//Users with their role
@@ -48,6 +49,8 @@ async function run() {
         const charityPickupRequestsCollection = db.collection('charityRequests');//Request from a charity to make a delivery or pickup
         const roleRequestCollection = db.collection('roleRequests');
         const transactionsCollection = db.collection('transactions');
+        const reviewCollection = db.collection('reviews');
+        const favoritesCollection = db.collection('favorites');
 
         // Creating a new user
 
@@ -273,6 +276,76 @@ async function run() {
             }
         });
 
+        // GET API - Get transaction history by user email
+        app.get('/transactions', async (req, res) => {
+            const { email } = req.query;
+
+            if (!email) {
+                return res.status(400).json({ message: 'Email is required' });
+            }
+
+            try {
+                const transactions = await transactionsCollection
+                    .find({ email })
+                    .sort({ date: -1 }) // Sort latest first
+                    .toArray();
+
+                res.status(200).json({
+                    message: 'Transaction history retrieved successfully',
+                    transactions,
+                });
+            } catch (error) {
+                console.error('Error fetching transactions:', error);
+                res.status(500).json({
+                    message: 'Failed to fetch transaction history',
+                    error: error.message,
+                });
+            }
+        });
+
+
+        // Getting User Specific Reviews
+        app.get('/my-reviews', async (req, res) => {
+            try {
+                const { email } = req.query;
+
+                if (!email) {
+                    return res.status(400).json({ message: 'Reviewer email is required' });
+                }
+
+                const userReviews = await reviewCollection.find({ reviewerEmail: email }).toArray();
+
+                res.status(200).json({
+                    message: 'Reviews fetched successfully',
+                    count: userReviews.length,
+                    reviews: userReviews,
+                });
+            } catch (error) {
+                console.error('Error fetching user reviews:', error);
+                res.status(500).json({ message: 'Failed to fetch reviews', error: error.message });
+            }
+        });
+
+        // GET user-specific favorite donations
+        app.get('/favorites', async (req, res) => {
+            const userEmail = req.query.email;
+            if (!userEmail) {
+                return res.status(400).json({ message: 'User email is required' });
+            }
+
+            try {
+                const favorites = await favoritesCollection
+                    .find({ userEmail })
+                    .sort({ createdAt: -1 })
+                    .toArray();
+
+                res.status(200).json({ favorites });
+            } catch (error) {
+                console.error('Failed to get favorites', error);
+                res.status(500).json({ message: 'Server error', error: error.message });
+            }
+        });
+
 
 
 
@@ -336,9 +409,6 @@ async function run() {
         app.post('/roleRequest', async (req, res) => {
             try {
                 const request = req.body;
-
-                console.log(request);
-
                 if (!request.transactionId || !request.amount) {
                     return res.status(400).json({ error: 'Missing payment data.' });
                 }
@@ -354,7 +424,10 @@ async function run() {
         // Saving the transactions data
         app.post('/transactions', async (req, res) => {
             try {
-                const transaction_data = req.body;
+                const transaction_data = {
+                    ...req.body,
+                    approval_status: 'Pending',
+                };
 
                 const result = await transactionsCollection.insertOne(transaction_data);
                 res.status(201).json({ message: 'Transactions saved successfully', result });
@@ -368,7 +441,6 @@ async function run() {
         app.post('/donations', async (req, res) => {
             try {
                 const donation = req.body;
-
                 donation.createdAt = new Date();
                 donation.status = donation.status || 'pending';
 
@@ -403,17 +475,71 @@ async function run() {
 
 
 
+        // Posting Reviews for specific Post
+        app.post('/reviews', async (req, res) => {
+            try {
+                const { post_id, reviewerName, reviewerEmail, description, rating, donationTitle, resturant_name } = req.body;
+
+                // Basic validation
+                if (!post_id || !reviewerName || !description || !rating) {
+                    return res.status(400).json({ message: 'post_id, reviewerName, description, and rating are required.' });
+                }
+
+                const reviewDoc = {
+                    post_id: new ObjectId(post_id),
+                    reviewerName,
+                    reviewerEmail: reviewerEmail || null,
+                    description,
+                    rating,
+                    donationTitle,
+                    resturant_name,
+                    createdAt: new Date(),
+                };
+
+                const result = await reviewCollection.insertOne(reviewDoc);
+
+                res.status(201).json({
+                    message: 'Review saved successfully',
+                    reviewId: result.insertedId,
+                });
+            } catch (error) {
+                console.error('Error saving review:', error);
+                res.status(500).json({ message: 'Failed to save review', error: error.message });
+            }
+        });
+
+        // Posting Data As Favourite
+        app.post('/favorites', async (req, res) => {
+            try {
+                const favorite = req.body;
+                const { donationId, userEmail } = favorite;
+
+                // Prevent duplicate favorites
+                const exists = await favoritesCollection.findOne({ donationId, userEmail });
+                if (exists) {
+                    return res.status(409).json({ message: 'Already added to favorites.' });
+                }
+
+                favorite.createdAt = new Date();
+
+                const result = await favoritesCollection.insertOne(favorite);
+                res.status(201).json({ message: 'Favorite saved', result });
+            } catch (error) {
+                res.status(500).json({ message: 'Failed to save favorite', error: error.message });
+            }
+        });
+
+
 
         // PATCH user by email to update last login (and optionally name/photo)
         app.patch('/users', async (req, res) => {
             try {
                 const email = req.query.email;
-                const { last_login_at, name, photo, role } = req.body;
+                const { last_login_at, name, photo } = req.body;
 
                 const updateDoc = {
                     $set: {
                         last_login_at,
-                        role,
                         ...(name && { name }),
                         ...(photo && { photo })
                     }
@@ -465,7 +591,7 @@ async function run() {
             }
         });
 
-        // // PATCH role request status (approve or reject)
+        // PATCH role request status (approve or reject)
         app.patch('/roleRequests/:id', async (req, res) => {
             const { id } = req.params;
             const { status } = req.body;
@@ -481,13 +607,13 @@ async function run() {
                     return res.status(404).json({ message: 'Role request not found' });
                 }
 
-                // Update the role request status
+                // Update role request status
                 const updateResult = await roleRequestCollection.updateOne(
                     { _id: new ObjectId(id) },
                     { $set: { charity_role_status: status } }
                 );
 
-                // If approved, update user role to 'charity'
+                // If approved, update user role
                 if (status === 'approved') {
                     await usersCollection.updateOne(
                         { email: roleRequest.email },
@@ -495,20 +621,28 @@ async function run() {
                     );
                 }
 
-                // Fetch the updated role request document
+                // Update corresponding transaction status
+                const transactionUpdateResult = await transactionsCollection.updateOne(
+                    { email: roleRequest.email, approval_status: 'Pending' }, // assuming one pending at a time
+                    { $set: { approval_status: status } }
+                );
+
+                // Fetch the updated role request
                 const updatedRequest = await roleRequestCollection.findOne({ _id: new ObjectId(id) });
 
-                // Respond with message and updated document
+                // Response
                 return res.status(200).json({
                     message: `Role request has been ${status} successfully.`,
                     modifiedCount: updateResult.modifiedCount,
+                    transactionModified: transactionUpdateResult.modifiedCount,
                     updatedRequest,
                 });
             } catch (error) {
-                console.error('Error updating role request:', error);
+                console.error('Error updating role request and transaction:', error);
                 res.status(500).json({ message: 'Server error', error: error.message });
             }
         });
+
 
         // PATCH update donation by ID
         app.patch('/donations/:id', async (req, res) => {
@@ -801,6 +935,23 @@ async function run() {
             }
         });
 
+        // Deleting Id Specific Review from My Reviews
+        // DELETE: Delete a review by ID
+        app.delete('/reviews/:id', async (req, res) => {
+            try {
+                const id = req.params.id;
+                const result = await reviewCollection.deleteOne({ _id: new ObjectId(id) });
+
+                if (result.deletedCount === 0) {
+                    return res.status(404).json({ message: 'Review not found' });
+                }
+
+                res.status(200).json({ message: 'Review deleted successfully' });
+            } catch (error) {
+                console.error('Error deleting review:', error);
+                res.status(500).json({ message: 'Server error', error: error.message });
+            }
+        });
 
 
 
