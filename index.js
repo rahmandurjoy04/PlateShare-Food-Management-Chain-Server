@@ -346,6 +346,109 @@ async function run() {
             }
         });
 
+        // GET all reviews for a specific donation
+        app.get('/donations/:id/reviews', async (req, res) => {
+            const donationId = req.params.id;
+            try {
+                const reviews = await reviewCollection
+                    .find({ post_id: new ObjectId(donationId) })
+                    .sort({ createdAt: -1 }) // most recent first
+                    .toArray();
+                res.send(reviews);
+            } catch (error) {
+                res.status(500).send({ message: 'Failed to fetch reviews', error });
+            }
+        });
+
+        app.get('/charity-requests', async (req, res) => {
+            try {
+                const latestRequests = await charityPickupRequestsCollection
+                    .find({})
+                    .sort({ createdAt: -1 }) // newest first
+                    .limit(3)
+                    .toArray();
+
+                res.status(200).json(latestRequests);
+            } catch (error) {
+                console.error('Failed to fetch charity requests:', error);
+                res.status(500).json({ message: 'Server error', error: error.message });
+            }
+        });
+
+
+        // GET API: Donation stats for a specific restaurant
+        app.get('/donation-stats/:email', async (req, res) => {
+  const email = req.params.email;
+
+  try {
+    const stats = await resturantDonationsCollection.aggregate([
+      {
+        $match: {
+          restaurantEmail: email,
+          status: 'Verified',
+        },
+      },
+      {
+        $addFields: {
+          quantityNumber: {
+            $convert: {
+              input: {
+                $ifNull: [
+                  {
+                    $let: {
+                      vars: {
+                        trimmedQuantity: { $trim: { input: "$quantity" } },
+                      },
+                      in: {
+                        $cond: {
+                          if: { $ne: ["$$trimmedQuantity", ""] }, // Non-empty check
+                          then: {
+                            $toInt: {
+                              $arrayElemAt: [
+                                { $split: ["$$trimmedQuantity", " "] }, // Split by space
+                                0, // Take the first element (number)
+                              ],
+                            },
+                          },
+                          else: 0,
+                        },
+                      },
+                    },
+                  },
+                  0, // Fallback if entire field is null
+                ],
+              },
+              to: "int",
+              onError: 0,
+              onNull: 0,
+            },
+          },
+        },
+      },
+      {
+        $group: {
+          _id: "$foodType",
+          totalQuantity: { $sum: "$quantityNumber" },
+        },
+      },
+      {
+        $project: {
+          foodType: "$_id",
+          totalQuantity: 1,
+          _id: 0,
+        },
+      },
+      {
+        $match: { totalQuantity: { $gt: 0 } }, // Optional: Filter out zero totals
+      },
+    ]).toArray();
+
+    res.send(stats);
+  } catch (error) {
+    res.status(500).send({ error: error.message });
+  }
+});
+
 
 
 
@@ -623,7 +726,7 @@ async function run() {
 
                 // Update corresponding transaction status
                 const transactionUpdateResult = await transactionsCollection.updateOne(
-                    { email: roleRequest.email, approval_status: 'Pending' }, // assuming one pending at a time
+                    { email: roleRequest.email, approval_status: 'Pending' },
                     { $set: { approval_status: status } }
                 );
 
@@ -723,7 +826,7 @@ async function run() {
                     {
                         $set: {
                             featured: true,
-                            featuredAt: new Date().toISOString()  // Add this field instead of updatedAt
+                            featuredAt: new Date().toISOString()
                         }
                     }
                 );
@@ -833,8 +936,6 @@ async function run() {
         });
 
 
-
-
         // DELETE API to delete user
         app.delete('/users/:id', async (req, res) => {
             const userId = req.params.id;
@@ -855,7 +956,11 @@ async function run() {
                 // Delete from MongoDB
                 await usersCollection.deleteOne({ _id: new ObjectId(userId) });
 
-                res.send({ success: true, message: 'User deleted from DB and Firebase' });
+
+                // 🔥 DELETE role request from roleRequestCollection
+                await roleRequestCollection.deleteOne({ email: user.email });
+
+                res.send({ success: true, message: 'User and role request deleted successfully' });
             } catch (error) {
                 res.status(500).send({ error: error.message });
             }
@@ -936,7 +1041,6 @@ async function run() {
         });
 
         // Deleting Id Specific Review from My Reviews
-        // DELETE: Delete a review by ID
         app.delete('/reviews/:id', async (req, res) => {
             try {
                 const id = req.params.id;
@@ -953,7 +1057,22 @@ async function run() {
             }
         });
 
-
+        // DELETE /favorites/:favId?email=user@example.com
+        app.delete('/favorites', async (req, res) => {
+            const { donationId, email } = req.body;
+            if (!donationId || !email) {
+                return res.status(400).json({ error: 'donationId and email required' });
+            }
+            try {
+                const result = await favoritesCollection.deleteOne({ donationId, userEmail: email });
+                if (result.deletedCount === 0) {
+                    return res.status(404).json({ message: 'Favorite not found' });
+                }
+                res.json({ message: 'Favorite removed successfully' });
+            } catch (err) {
+                res.status(500).json({ error: err.message });
+            }
+        });
 
 
 
