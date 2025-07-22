@@ -1,13 +1,14 @@
 const express = require('express');
 const cors = require('cors');
 require('dotenv').config();
+const jwt = require('jsonwebtoken')
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const admin = require('firebase-admin');
-
 const stripe = require("stripe")(process.env.Payment_GateWay_Key);
 
 // Need to be deleted
 const path = require("path");
+const { verify } = require('crypto');
 const serviceAccount = require(path.resolve(__dirname, "firebase-adminsdk.json"));
 
 admin.initializeApp({
@@ -39,7 +40,7 @@ const client = new MongoClient(uri, {
 async function run() {
     try {
         // Connect the client to the server	(optional starting in v4.7)
-        await client.connect();
+        // await client.connect();
 
 
         //*All Codes Come here*//
@@ -52,26 +53,61 @@ async function run() {
         const reviewCollection = db.collection('reviews');
         const favoritesCollection = db.collection('favorites');
 
-        // Creating a new user
 
-        // GET /users or /users?email=someone@example.com
-        app.get('/users', async (req, res) => {
-            const email = req.query.email;
+        // Creating JWT
+        app.post(`/jwt`, (req, res) => {
+            const user = { email: req.body.email }
 
+            // Token Creation
+            const token = jwt.sign(user, process.env.JWT_SECRET_KEY, {
+                expiresIn: '1d'
+            })
+            res.send({ token })
+        })
+
+        // Custom Middleware
+        const verifyJWTToken = async (req, res, next) => {
+            const authHeader = req.headers.authorization;
+            // console.log(authHeader);
+            if (!authHeader) {
+                return res.status(401).send({ message: 'Unauthorized Access' })
+            }
+            const token = authHeader.split(' ')[1];
+            if (!token) {
+                return res.status(401).send({ message: 'Unauthorized Access' })
+            }
+            jwt.verify(token, process.env.JWT_SECRET_KEY, (err, decoded) => {
+                if (err) {
+                    console.log(err);
+                    return res.status(401).send({ message: 'Unauthorized Access' })
+                }
+                req.tokenEmail = decoded.email
+                next();
+            })
+        }
+
+        // Get all users
+        app.get('/users', verifyJWTToken, async (req, res) => {
             try {
+                const users = await usersCollection.find({}).toArray();
+                return res.status(200).json({ message: 'Users retrieved successfully', users });
+            } catch (error) {
+                console.error('Error retrieving users:', error);
+                res.status(500).json({ message: 'Server error', error: error.message });
+            }
+        });
+
+        // Get a single user by email (dynamic query parameter)
+        app.get('/users/email', async (req, res) => {
+            try {
+                const email = req.query.email;
                 if (email) {
                     // Fetch single user by email
                     const user = await usersCollection.findOne({ email });
-
                     if (!user) {
                         return res.status(404).json({ message: 'User not found' });
                     }
-
                     return res.status(200).json(user);
-                } else {
-                    // Fetch all users
-                    const users = await usersCollection.find({}).toArray();
-                    return res.status(200).json({ message: 'Users retrieved successfully', users });
                 }
             } catch (error) {
                 console.error('Error retrieving user(s):', error);
@@ -79,33 +115,51 @@ async function run() {
             }
         });
 
-
-        // GET all or filtered role requests
-        app.get('/roleRequests', async (req, res) => {
+        // Role Requests from user that he made
+        app.get('/roleRequests', verifyJWTToken, async (req, res) => {
             try {
-                const email = req.query.email;
+                const requestedEmail = req.query.email;
+                const decodedEmail = req.tokenEmail;
 
-                let query = {};
-                if (email) {
-                    query.email = email;
+                // If an email is provided in the query, verify it matches the one from token
+                if (requestedEmail && requestedEmail !== decodedEmail) {
+                    return res.status(403).json({ message: 'Forbidden: Email mismatch' });
                 }
 
-                const roleRequests = await roleRequestCollection.findOne(query);
-                res.status(200).json(roleRequests);
+                let query = {};
+                if (requestedEmail) {
+                    query.email = requestedEmail;
+                }
+
+                const roleRequest = await roleRequestCollection.findOne(query);
+                res.status(200).json(roleRequest);
             } catch (error) {
                 console.error('Error retrieving role requests:', error);
                 res.status(500).json({ message: 'Server error', error: error.message });
             }
         });
 
-        // GET all or filtered role requests
-        app.get('/allRoleRequests', async (req, res) => {
+
+        // GET all or filtered role requests by admin
+        app.get('/allRoleRequests', verifyJWTToken, async (req, res) => {
             try {
+                const requesterEmail = req.tokenEmail;
+
+                // 1. Find the requester in your users collection
+                const requester = await usersCollection.findOne({ email: requesterEmail });
+
+                // 2. Check if the requester is admin
+                if (!requester || requester.role !== 'admin') {
+                    return res.status(403).json({ message: 'Forbidden: Admins only' });
+                }
+
+                // 3. Continue with the query logic
                 const email = req.query.email;
                 let query = {};
                 if (email) {
                     query.email = email;
                 }
+
                 const roleRequests = await roleRequestCollection.find(query).toArray();
                 res.status(200).json(roleRequests);
             } catch (error) {
@@ -114,8 +168,9 @@ async function run() {
             }
         });
 
+
         // Getting All Donations
-        app.get('/donations', async (req, res) => {
+        app.get('/donations', verifyJWTToken, async (req, res) => {
             try {
                 const donations = await resturantDonationsCollection.find({}).toArray();
                 res.status(200).json(donations);
@@ -126,14 +181,17 @@ async function run() {
         });
 
 
-        // GET: My Donations
-        app.get('/donations/my-donations', async (req, res) => {
+        // GET: My Donations As A resturant
+        app.get('/donations/my-donations', verifyJWTToken, async (req, res) => {
             const email = req.query.email;
 
             if (!email) {
                 return res.status(400).json({ message: 'Email query is required' });
             }
-
+            const decodedEmail = req.tokenEmail;
+            if (decodedEmail !== email) {
+                return res.status(403).send({ message: 'Forbidden Access' })
+            }
             try {
                 const myDonations = await resturantDonationsCollection
                     .find({ restaurantEmail: email })
@@ -148,7 +206,7 @@ async function run() {
         });
 
         // Get donation by ID
-        app.get('/donations/:id', async (req, res) => {
+        app.get('/donations/:id', verifyJWTToken, async (req, res) => {
             const { id } = req.params;
 
             try {
@@ -165,7 +223,7 @@ async function run() {
             }
         });
 
-        app.get('/alldonations/verified', async (req, res) => {
+        app.get('/alldonations/verified', verifyJWTToken, async (req, res) => {
             try {
                 const verifiedDonations = await resturantDonationsCollection
                     .find({ status: 'Verified' })
@@ -178,7 +236,7 @@ async function run() {
             }
         });
 
-        app.get('/donation-requests', async (req, res) => {
+        app.get('/donation-requests', verifyJWTToken, async (req, res) => {
             try {
                 const email = req.query.email;
 
@@ -196,7 +254,24 @@ async function run() {
         });
 
 
-        // Getting Featured Donations
+        // Get donation requests for a specific donationId, optionally filtered by charityEmail
+        app.get('/donation-requests/:id', verifyJWTToken, async (req, res) => {
+            try {
+                const donationId = req.params.id;
+                const charityEmail = req.query.charityEmail; // Optional query parameter
+                const query = { donationId };
+                if (charityEmail) {
+                    query.charityEmail = charityEmail; // Filter by charityEmail if provided
+                }
+                const requests = await charityPickupRequestsCollection.find(query).toArray();
+                res.status(200).json(requests);
+            } catch (error) {
+                res.status(500).json({ message: 'Failed to fetch donation requests', error: error.message });
+            }
+        });
+
+        // Getting Featured Donations 
+        // No Jwt AS Everyone sees
         app.get('/featuredDonations', async (req, res) => {
             try {
                 const featuredDonations = await resturantDonationsCollection
@@ -211,8 +286,12 @@ async function run() {
         });
 
         // GET confirmed pickups by charity
-        app.get('/pickups', async (req, res) => {
+        app.get('/pickups', verifyJWTToken, async (req, res) => {
             const charityEmail = req.query.email;
+            const decodedEmail = req.tokenEmail;
+            if (decodedEmail !== charityEmail) {
+                return res.status(403).send({ message: 'Forbidden Access' })
+            }
 
             const query = {};
             if (charityEmail) {
@@ -234,8 +313,13 @@ async function run() {
 
 
         // Received or completed Deliveries For Charity
-        app.get('/received-donations', async (req, res) => {
+        app.get('/received-donations', verifyJWTToken, async (req, res) => {
             const charityEmail = req.query.email;
+
+            const decodedEmail = req.tokenEmail;
+            if (decodedEmail !== charityEmail) {
+                return res.status(403).send({ message: 'Forbidden Access' })
+            }
 
             if (!charityEmail) {
                 return res.status(400).json({ message: 'Charity email is required as query parameter' });
@@ -277,8 +361,14 @@ async function run() {
         });
 
         // GET API - Get transaction history by user email
-        app.get('/transactions', async (req, res) => {
+        app.get('/transactions', verifyJWTToken, async (req, res) => {
             const { email } = req.query;
+            console.log(email);
+            const decodedEmail = req.tokenEmail;
+            console.log(decodedEmail);
+            if (decodedEmail !== email) {
+                return res.status(403).send({ message: 'Forbidden Access' })
+            }
 
             if (!email) {
                 return res.status(400).json({ message: 'Email is required' });
@@ -305,9 +395,13 @@ async function run() {
 
 
         // Getting User Specific Reviews
-        app.get('/my-reviews', async (req, res) => {
+        app.get('/my-reviews', verifyJWTToken, async (req, res) => {
             try {
                 const { email } = req.query;
+                const decodedEmail = req.tokenEmail;
+                if (decodedEmail !== email) {
+                    return res.status(403).send({ message: 'Forbidden Access' })
+                }
 
                 if (!email) {
                     return res.status(400).json({ message: 'Reviewer email is required' });
@@ -327,8 +421,12 @@ async function run() {
         });
 
         // GET user-specific favorite donations
-        app.get('/favorites', async (req, res) => {
+        app.get('/favorites', verifyJWTToken, async (req, res) => {
             const userEmail = req.query.email;
+            const decodedEmail = req.tokenEmail;
+            if (decodedEmail !== userEmail) {
+                return res.status(403).send({ message: 'Forbidden Access' })
+            }
             if (!userEmail) {
                 return res.status(400).json({ message: 'User email is required' });
             }
@@ -347,7 +445,7 @@ async function run() {
         });
 
         // GET all reviews for a specific donation
-        app.get('/donations/:id/reviews', async (req, res) => {
+        app.get('/donations/:id/reviews', verifyJWTToken, async (req, res) => {
             const donationId = req.params.id;
             try {
                 const reviews = await reviewCollection
@@ -377,8 +475,12 @@ async function run() {
 
 
         // GET API: Donation stats for a specific restaurant
-        app.get('/donation-stats/:email', async (req, res) => {
+        app.get('/donation-stats/:email', verifyJWTToken, async (req, res) => {
             const email = req.params.email;
+            const decodedEmail = req.tokenEmail;
+            if (decodedEmail !== email) {
+                return res.status(403).send({ message: 'Forbidden Access' })
+            }
 
             try {
                 const stats = await resturantDonationsCollection.aggregate([
@@ -449,7 +551,7 @@ async function run() {
             }
         });
 
-        app.get('/donation-stats-all', async (req, res) => {
+        app.get('/donation-stats-all', verifyJWTToken, async (req, res) => {
             try {
                 const stats = await resturantDonationsCollection.aggregate([
                     {
@@ -587,6 +689,9 @@ async function run() {
             }
         });
 
+
+
+
         // POST API to save user
         app.post('/users', async (req, res) => {
             try {
@@ -621,7 +726,7 @@ async function run() {
         });
 
         // Post api for payment intent
-        app.post('/create-payment-intent', async (req, res) => {
+        app.post('/create-payment-intent', verifyJWTToken, async (req, res) => {
             try {
                 const { amount } = req.body;
 
@@ -644,7 +749,7 @@ async function run() {
 
 
         // Posting the roleReques data in db
-        app.post('/roleRequest', async (req, res) => {
+        app.post('/roleRequest', verifyJWTToken, async (req, res) => {
             try {
                 const request = req.body;
                 if (!request.transactionId || !request.amount) {
@@ -660,7 +765,7 @@ async function run() {
         });
 
         // Saving the transactions data
-        app.post('/transactions', async (req, res) => {
+        app.post('/transactions', verifyJWTToken, async (req, res) => {
             try {
                 const transaction_data = {
                     ...req.body,
@@ -676,7 +781,7 @@ async function run() {
         });
 
         // Creation of donation by resturant
-        app.post('/donations', async (req, res) => {
+        app.post('/donations', verifyJWTToken, async (req, res) => {
             try {
                 const donation = req.body;
                 donation.createdAt = new Date();
@@ -696,7 +801,7 @@ async function run() {
 
 
         // Requests By Charity done to make a donation Pickup
-        app.post('/donation-requests', async (req, res) => {
+        app.post('/donation-requests', verifyJWTToken, async (req, res) => {
             try {
                 const request = req.body;
                 const result = await charityPickupRequestsCollection.insertOne({
@@ -714,7 +819,7 @@ async function run() {
 
 
         // Posting Reviews for specific Post
-        app.post('/reviews', async (req, res) => {
+        app.post('/reviews', verifyJWTToken, async (req, res) => {
             try {
                 const { post_id, reviewerName, reviewerEmail, description, rating, donationTitle, resturant_name } = req.body;
 
@@ -747,7 +852,7 @@ async function run() {
         });
 
         // Posting Data As Favourite
-        app.post('/favorites', async (req, res) => {
+        app.post('/favorites', verifyJWTToken, async (req, res) => {
             try {
                 const favorite = req.body;
                 const { donationId, userEmail } = favorite;
@@ -770,6 +875,8 @@ async function run() {
 
 
         // PATCH user by email to update last login (and optionally name/photo)
+
+        // nj
         app.patch('/users', async (req, res) => {
             try {
                 const email = req.query.email;
@@ -802,7 +909,7 @@ async function run() {
 
 
         // PATCH API to update user role
-        app.patch('/users/:id/role', async (req, res) => {
+        app.patch('/users/:id/role', verifyJWTToken, async (req, res) => {
             try {
                 const { id } = req.params;
                 const { role } = req.body;
@@ -830,7 +937,7 @@ async function run() {
         });
 
         // PATCH role request status (approve or reject)
-        app.patch('/roleRequests/:id', async (req, res) => {
+        app.patch('/roleRequests/:id', verifyJWTToken, async (req, res) => {
             const { id } = req.params;
             const { status } = req.body;
 
@@ -883,7 +990,7 @@ async function run() {
 
 
         // PATCH update donation by ID
-        app.patch('/donations/:id', async (req, res) => {
+        app.patch('/donations/:id', verifyJWTToken, async (req, res) => {
             const { id } = req.params;
             const newData = req.body;
 
@@ -931,7 +1038,7 @@ async function run() {
         });
 
 
-        app.patch('/donations/:id/status', async (req, res) => {
+        app.patch('/donations/:id/status', verifyJWTToken, async (req, res) => {
             const { id } = req.params;
             const { status } = req.body;
             try {
@@ -953,7 +1060,7 @@ async function run() {
 
 
         // Addng featured Field When Admin Clicks Feature
-        app.patch('/donations/:id/feature', async (req, res) => {
+        app.patch('/donations/:id/feature', verifyJWTToken, async (req, res) => {
             try {
                 const { id } = req.params;
                 const result = await resturantDonationsCollection.updateOne(
@@ -978,7 +1085,7 @@ async function run() {
 
 
         // Accepting Requests from Resturant To charity 
-        app.patch('/donation-requests/status/:id', async (req, res) => {
+        app.patch('/donation-requests/status/:id', verifyJWTToken, async (req, res) => {
             const requestId = req.params.id;
             const { status, donationId } = req.body;
 
@@ -1026,7 +1133,7 @@ async function run() {
 
 
         // Make donation as picked up bu Charity
-        app.patch('/donations/:id/pickup', async (req, res) => {
+        app.patch('/donations/:id/pickup', verifyJWTToken, async (req, res) => {
             const donationId = req.params.id;
 
             try {
@@ -1072,7 +1179,7 @@ async function run() {
 
 
         // DELETE API to delete user
-        app.delete('/users/:id', async (req, res) => {
+        app.delete('/users/:id', verifyJWTToken, async (req, res) => {
             const userId = req.params.id;
 
             try {
@@ -1103,10 +1210,8 @@ async function run() {
 
 
         // Delete donation by ID and email
-        app.delete('/donations/:id', async (req, res) => {
+        app.delete('/donations/:id', verifyJWTToken, async (req, res) => {
             const donationId = req.params.id;
-
-            console.log(donationId);
 
             try {
                 const result = await resturantDonationsCollection.deleteOne({
@@ -1126,7 +1231,7 @@ async function run() {
 
 
         // DELETE a specific donation request by ID from admin
-        app.delete('/donation-requests/:id', async (req, res) => {
+        app.delete('/donation-requests/:id', verifyJWTToken, async (req, res) => {
             try {
                 const { id } = req.params;
                 const result = await charityPickupRequestsCollection.deleteOne({ _id: new ObjectId(id) });
@@ -1141,7 +1246,7 @@ async function run() {
 
 
         // Delete charity Requests Made by Charity
-        app.delete('/donation-requests/:id', async (req, res) => {
+        app.delete('/donation-requests/charity/:id', verifyJWTToken, async (req, res) => {
             const requestId = req.params.id;
             const charityEmail = req.query.charityEmail;
 
@@ -1176,7 +1281,7 @@ async function run() {
         });
 
         // Deleting Id Specific Review from My Reviews
-        app.delete('/reviews/:id', async (req, res) => {
+        app.delete('/reviews/:id', verifyJWTToken, async (req, res) => {
             try {
                 const id = req.params.id;
                 const result = await reviewCollection.deleteOne({ _id: new ObjectId(id) });
@@ -1193,8 +1298,14 @@ async function run() {
         });
 
         // DELETE /favorites/:favId?email=user@example.com
-        app.delete('/favorites', async (req, res) => {
+        app.delete('/favorites', verifyJWTToken, async (req, res) => {
             const { donationId, email } = req.body;
+
+            const decodedEmail = req.tokenEmail;
+            if (decodedEmail !== email) {
+                return res.status(403).send({ message: 'Forbidden Access' })
+            }
+
             if (!donationId || !email) {
                 return res.status(400).json({ error: 'donationId and email required' });
             }
@@ -1213,8 +1324,10 @@ async function run() {
 
 
         // Send a ping to confirm a successful connection
-        await client.db("admin").command({ ping: 1 });
-        console.log("Pinged your deployment. You successfully connected to MongoDB!");
+        // await client.db("admin").command({ ping: 1 });
+        // console.log("Pinged your deployment. You successfully connected to MongoDB!");
+
+        
     } finally {
         // Ensures that the client will close when you finish/error
         // await client.close();
