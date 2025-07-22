@@ -378,79 +378,214 @@ async function run() {
 
         // GET API: Donation stats for a specific restaurant
         app.get('/donation-stats/:email', async (req, res) => {
-  const email = req.params.email;
+            const email = req.params.email;
 
-  try {
-    const stats = await resturantDonationsCollection.aggregate([
-      {
-        $match: {
-          restaurantEmail: email,
-          status: 'Verified',
-        },
-      },
-      {
-        $addFields: {
-          quantityNumber: {
-            $convert: {
-              input: {
-                $ifNull: [
-                  {
-                    $let: {
-                      vars: {
-                        trimmedQuantity: { $trim: { input: "$quantity" } },
-                      },
-                      in: {
-                        $cond: {
-                          if: { $ne: ["$$trimmedQuantity", ""] }, // Non-empty check
-                          then: {
-                            $toInt: {
-                              $arrayElemAt: [
-                                { $split: ["$$trimmedQuantity", " "] }, // Split by space
-                                0, // Take the first element (number)
-                              ],
-                            },
-                          },
-                          else: 0,
+            try {
+                const stats = await resturantDonationsCollection.aggregate([
+                    {
+                        $match: {
+                            restaurantEmail: email,
+                            status: 'Verified',
                         },
-                      },
                     },
-                  },
-                  0, // Fallback if entire field is null
-                ],
-              },
-              to: "int",
-              onError: 0,
-              onNull: 0,
-            },
-          },
-        },
-      },
-      {
-        $group: {
-          _id: "$foodType",
-          totalQuantity: { $sum: "$quantityNumber" },
-        },
-      },
-      {
-        $project: {
-          foodType: "$_id",
-          totalQuantity: 1,
-          _id: 0,
-        },
-      },
-      {
-        $match: { totalQuantity: { $gt: 0 } }, // Optional: Filter out zero totals
-      },
-    ]).toArray();
+                    {
+                        $addFields: {
+                            quantityNumber: {
+                                $convert: {
+                                    input: {
+                                        $ifNull: [
+                                            {
+                                                $let: {
+                                                    vars: {
+                                                        trimmedQuantity: { $trim: { input: "$quantity" } },
+                                                    },
+                                                    in: {
+                                                        $cond: {
+                                                            if: { $ne: ["$$trimmedQuantity", ""] }, // Non-empty check
+                                                            then: {
+                                                                $toInt: {
+                                                                    $arrayElemAt: [
+                                                                        { $split: ["$$trimmedQuantity", " "] }, // Split by space
+                                                                        0, // Take the first element (number)
+                                                                    ],
+                                                                },
+                                                            },
+                                                            else: 0,
+                                                        },
+                                                    },
+                                                },
+                                            },
+                                            0, // Fallback if entire field is null
+                                        ],
+                                    },
+                                    to: "int",
+                                    onError: 0,
+                                    onNull: 0,
+                                },
+                            },
+                        },
+                    },
+                    {
+                        $group: {
+                            _id: "$foodType",
+                            totalQuantity: { $sum: "$quantityNumber" },
+                        },
+                    },
+                    {
+                        $project: {
+                            foodType: "$_id",
+                            totalQuantity: 1,
+                            _id: 0,
+                        },
+                    },
+                    {
+                        $match: { totalQuantity: { $gt: 0 } }, // Optional: Filter out zero totals
+                    },
+                ]).toArray();
 
-    res.send(stats);
-  } catch (error) {
-    res.status(500).send({ error: error.message });
-  }
-});
+                res.send(stats);
+            } catch (error) {
+                res.status(500).send({ error: error.message });
+            }
+        });
 
+        app.get('/donation-stats-all', async (req, res) => {
+            try {
+                const stats = await resturantDonationsCollection.aggregate([
+                    {
+                        $match: {
+                            status: 'Verified',
+                        },
+                    },
+                    {
+                        $addFields: {
+                            quantityNumber: {
+                                $convert: {
+                                    input: {
+                                        $ifNull: [
+                                            {
+                                                $let: {
+                                                    vars: {
+                                                        trimmedQuantity: { $trim: { input: "$quantity" } },
+                                                    },
+                                                    in: {
+                                                        $cond: {
+                                                            if: { $ne: ["$$trimmedQuantity", ""] },
+                                                            then: {
+                                                                $toInt: {
+                                                                    $arrayElemAt: [
+                                                                        { $split: ["$$trimmedQuantity", " "] },
+                                                                        0,
+                                                                    ],
+                                                                },
+                                                            },
+                                                            else: 0,
+                                                        },
+                                                    },
+                                                },
+                                            },
+                                            0,
+                                        ],
+                                    },
+                                    to: "int",
+                                    onError: 0,
+                                    onNull: 0,
+                                },
+                            },
+                        },
+                    },
+                    {
+                        $group: {
+                            _id: {
+                                foodType: "$foodType",
+                                restaurantEmail: "$restaurantEmail",
+                            },
+                            totalQuantity: { $sum: "$quantityNumber" },
+                            donationCount: { $sum: 1 },
+                        },
+                    },
+                    {
+                        $group: {
+                            _id: "$_id.foodType",
+                            restaurants: {
+                                $push: {
+                                    restaurantEmail: "$_id.restaurantEmail",
+                                    totalQuantity: "$totalQuantity",
+                                    donationCount: "$donationCount",
+                                },
+                            },
+                            overallTotalQuantity: { $sum: "$totalQuantity" },
+                        },
+                    },
+                    {
+                        $project: {
+                            foodType: "$_id",
+                            restaurants: 1,
+                            overallTotalQuantity: 1,
+                            _id: 0,
+                        },
+                    },
+                ]).toArray();
 
+                // Add total stats across all food types
+                const totalStats = await resturantDonationsCollection.aggregate([
+                    {
+                        $match: { status: 'Verified' },
+                    },
+                    {
+                        $addFields: {
+                            quantityNumber: {
+                                $convert: {
+                                    input: {
+                                        $ifNull: [
+                                            {
+                                                $let: {
+                                                    vars: { trimmedQuantity: { $trim: { input: "$quantity" } } },
+                                                    in: {
+                                                        $cond: {
+                                                            if: { $ne: ["$$trimmedQuantity", ""] },
+                                                            then: { $toInt: { $arrayElemAt: [{ $split: ["$$trimmedQuantity", " "] }, 0] } },
+                                                            else: 0,
+                                                        },
+                                                    },
+                                                },
+                                            },
+                                            0,
+                                        ],
+                                    },
+                                    to: "int",
+                                    onError: 0,
+                                    onNull: 0,
+                                },
+                            },
+                        },
+                    },
+                    {
+                        $group: {
+                            _id: null,
+                            totalQuantityAll: { $sum: "$quantityNumber" },
+                            totalDonations: { $sum: 1 },
+                            uniqueRestaurants: { $addToSet: "$restaurantEmail" },
+                        },
+                    },
+                    {
+                        $project: {
+                            _id: 0,
+                            totalQuantityAll: 1,
+                            totalDonations: 1,
+                            uniqueRestaurantsCount: { $size: "$uniqueRestaurants" },
+                        },
+                    },
+                ]).toArray();
 
+                res.send({
+                    byFoodType: stats,
+                    totalStats: totalStats[0] || { totalQuantityAll: 0, totalDonations: 0, uniqueRestaurantsCount: 0 },
+                });
+            } catch (error) {
+                res.status(500).send({ error: error.message });
+            }
+        });
 
         // POST API to save user
         app.post('/users', async (req, res) => {
