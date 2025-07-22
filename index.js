@@ -9,7 +9,10 @@ const stripe = require("stripe")(process.env.Payment_GateWay_Key);
 // Need to be deleted
 const path = require("path");
 const { verify } = require('crypto');
-const serviceAccount = require(path.resolve(__dirname, "firebase-adminsdk.json"));
+
+
+const decoded = Buffer.from(process.env.FB_SERVICE_KEY, 'base64').toString('utf8')
+const serviceAccount = JSON.parse(decoded);
 
 admin.initializeApp({
     credential: admin.credential.cert(serviceAccount)
@@ -1327,7 +1330,7 @@ async function run() {
         // await client.db("admin").command({ ping: 1 });
         // console.log("Pinged your deployment. You successfully connected to MongoDB!");
 
-        
+
     } finally {
         // Ensures that the client will close when you finish/error
         // await client.close();
