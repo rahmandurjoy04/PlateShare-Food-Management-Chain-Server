@@ -490,7 +490,6 @@ async function run() {
                     {
                         $match: {
                             restaurantEmail: email,
-                            status: 'Verified',
                         },
                     },
                     {
@@ -880,7 +879,7 @@ async function run() {
         // PATCH user by email to update last login (and optionally name/photo)
 
         // nj
-        app.patch('/users', async (req, res) => {
+        app.patch('/users/email', async (req, res) => {
             try {
                 const email = req.query.email;
                 const { last_login_at, name, photo } = req.body;
