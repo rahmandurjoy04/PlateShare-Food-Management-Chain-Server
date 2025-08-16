@@ -209,7 +209,7 @@ async function run() {
         });
 
         // Get donation by ID
-        app.get('/donations/:id', verifyJWTToken, async (req, res) => {
+        app.get('/donations/:id', async (req, res) => {
             const { id } = req.params;
 
             try {
@@ -226,7 +226,7 @@ async function run() {
             }
         });
 
-        app.get('/alldonations/verified', verifyJWTToken, async (req, res) => {
+        app.get('/alldonations/verified', async (req, res) => {
             try {
                 const verifiedDonations = await resturantDonationsCollection
                     .find({ status: 'Verified' })
