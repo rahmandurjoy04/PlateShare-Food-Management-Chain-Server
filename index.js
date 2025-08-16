@@ -258,7 +258,7 @@ async function run() {
 
 
         // Get donation requests for a specific donationId, optionally filtered by charityEmail
-        app.get('/donation-requests/:id', verifyJWTToken, async (req, res) => {
+        app.get('/donation-requests/:id', async (req, res) => {
             try {
                 const donationId = req.params.id;
                 const charityEmail = req.query.charityEmail; // Optional query parameter
@@ -448,7 +448,7 @@ async function run() {
         });
 
         // GET all reviews for a specific donation
-        app.get('/donations/:id/reviews', verifyJWTToken, async (req, res) => {
+        app.get('/donations/:id/reviews', async (req, res) => {
             const donationId = req.params.id;
             try {
                 const reviews = await reviewCollection
@@ -466,7 +466,7 @@ async function run() {
                 const latestRequests = await charityPickupRequestsCollection
                     .find({})
                     .sort({ createdAt: -1 }) // newest first
-                    .limit(3)
+                    .limit(4)
                     .toArray();
 
                 res.status(200).json(latestRequests);
