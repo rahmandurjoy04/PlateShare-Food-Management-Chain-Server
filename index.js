@@ -5,6 +5,7 @@ const jwt = require('jsonwebtoken')
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const admin = require('firebase-admin');
 const stripe = require("stripe")(process.env.Payment_GateWay_Key);
+const nodemailer = require("nodemailer");
 
 // Need to be deleted
 const path = require("path");
@@ -55,6 +56,7 @@ async function run() {
         const transactionsCollection = db.collection('transactions');
         const reviewCollection = db.collection('reviews');
         const favoritesCollection = db.collection('favorites');
+        const newsletterCollection = db.collection('newsletterSubscribers')
 
 
         // Creating JWT
@@ -691,6 +693,62 @@ async function run() {
             }
         });
 
+        // Getting top restaurants
+        app.get('/restaurants/top-donors', async (req, res) => {
+            try {
+                const topRestaurants = await resturantDonationsCollection.aggregate([
+                    { $match: { status: "Verified" } }, // Only verified donations
+                    {
+                        $group: {
+                            _id: "$restaurantEmail",     // Group by restaurant email
+                            donationCount: { $sum: 1 }   // Count donations
+                        }
+                    },
+                    {
+                        $lookup: {
+                            from: "users",               // users collection
+                            localField: "_id",           // restaurantEmail from donations
+                            foreignField: "email",       // match with user email
+                            as: "restaurantInfo"
+                        }
+                    },
+                    { $unwind: "$restaurantInfo" },   // Flatten the array
+                    {
+                        $project: {
+                            _id: 0,
+                            name: "$restaurantInfo.name",
+                            email: "$_id",
+                            photo: "$restaurantInfo.photo",
+                            donationCount: 1,
+                            joinedAt: "$restaurantInfo.created_at"  // Joining date
+
+                        }
+                    },
+                    { $sort: { donationCount: -1 } }, // Sort descending
+                    { $limit: 4 }                      // Top 4
+                ]).toArray();
+
+                res.json(topRestaurants);
+            } catch (err) {
+                console.error('Failed to get top donating restaurants:', err);
+                res.status(500).json({ error: 'Failed to fetch top donors' });
+            }
+        });
+
+// Getting the partners who are working with us
+ app.get('/partners',verifyJWTToken, async (req, res) => {
+  try {
+    const partners = await usersCollection
+      .find({ role: { $in: ["restaurant", "charity"] } })
+      .project({ _id: 0, name: 1, email: 1, photo: 1, role: 1, created_at: 1 })
+      .toArray();
+
+    res.json(partners);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to fetch partners" });
+  }
+});
 
 
 
@@ -874,7 +932,46 @@ async function run() {
             }
         });
 
+        // Newsletter Subscription Route
+        app.post("/newsletter/subscribe", async (req, res) => {
+            const { email } = req.query;
+            if (!email) return res.status(400).json({ error: "Email is required" });
 
+            try {
+                // 1. Nodemailer transporter
+                const transporter = nodemailer.createTransport({
+                    service: "gmail",
+                    auth: {
+                        user: process.env.NEWSLETTER_EMAIL,
+                        pass: process.env.NEWSLETTER_EMAIL_PASS,
+                    },
+                });
+
+                // 2. Send confirmation email
+                await transporter.sendMail({
+                    from: `"PlateShare Newsletter" <${process.env.NEWSLETTER_EMAIL}>`,
+                    to: email,
+                    subject: "🎉 Welcome to PlateShare Newsletter!",
+                    html: `
+        <h2>Thanks for subscribing! 🍽️</h2>
+        <p>We'll keep you updated on food donations, community stories, and upcoming features.</p>
+        <br/>
+        <p style="font-size:12px;color:gray;">If you did't subscribe, just ignore this email.</p>
+      `,
+                });
+
+                // 3. Save subscriber in MongoDB
+                await newsletterCollection.insertOne({
+                    email,
+                    subscribedAt: new Date(),
+                });
+
+                res.json({ success: true, message: "Subscription successful!" });
+            } catch (err) {
+                console.error("Error subscribing:", err.message);
+                res.status(500).json({ error: "Failed to subscribe", details: err.message });
+            }
+        });
 
         // PATCH user by email to update last login (and optionally name/photo)
 
