@@ -735,20 +735,20 @@ async function run() {
             }
         });
 
-// Getting the partners who are working with us
- app.get('/partners',verifyJWTToken, async (req, res) => {
-  try {
-    const partners = await usersCollection
-      .find({ role: { $in: ["restaurant", "charity"] } })
-      .project({ _id: 0, name: 1, email: 1, photo: 1, role: 1, created_at: 1 })
-      .toArray();
+        // Getting the partners who are working with us
+        app.get('/partners', verifyJWTToken, async (req, res) => {
+            try {
+                const partners = await usersCollection
+                    .find({ role: { $in: ["restaurant", "charity"] } })
+                    .project({ _id: 0, name: 1, email: 1, photo: 1, role: 1, created_at: 1 })
+                    .toArray();
 
-    res.json(partners);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to fetch partners" });
-  }
-});
+                res.json(partners);
+            } catch (err) {
+                console.error(err);
+                res.status(500).json({ error: "Failed to fetch partners" });
+            }
+        });
 
 
 
@@ -973,9 +973,37 @@ async function run() {
             }
         });
 
+        app.patch('/user/profile', async (req, res) => {
+            try {
+                const { email, phone, location, photo } = req.body;
+
+                if (!email) return res.status(400).json({ error: 'Email is required' });
+
+                // Build dynamic update object
+                const updateFields = {};
+                if (phone) updateFields.phone = phone;
+                if (location) updateFields.location = location;
+                if (photo) updateFields.photo = photo;
+                updateFields.updatedAt = new Date();
+
+                const result = await usersCollection.updateOne(
+                    { email },
+                    { $set: updateFields }
+                );
+
+                if (result.modifiedCount > 0) {
+                    return res.json({ message: 'Profile updated successfully', modifiedCount: result.modifiedCount });
+                } else {
+                    return res.status(404).json({ message: 'No matching user found or no changes made' });
+                }
+            } catch (error) {
+                console.error(error);
+                res.status(500).json({ error: 'Internal server error' });
+            }
+        });
+
         // PATCH user by email to update last login (and optionally name/photo)
 
-        // nj
         app.patch('/users/email', async (req, res) => {
             try {
                 const email = req.query.email;
@@ -1001,6 +1029,32 @@ async function run() {
                 res.status(200).json({ message: 'User login time updated successfully' });
             } catch (error) {
                 console.error('Error updating user login:', error);
+                res.status(500).json({ message: 'Server error', error: error.message });
+            }
+        });
+
+        // PATCH /users/photo?email=user@example.com
+        app.patch('/users/photo', async (req, res) => {
+            try {
+                const email = req.query.email;
+                const { photo } = req.body;
+
+                if (!photo) {
+                    return res.status(400).json({ message: 'Photo URL is required' });
+                }
+
+                const result = await usersCollection.updateOne(
+                    { email },
+                    { $set: { photo } }
+                );
+
+                if (result.matchedCount === 0) {
+                    return res.status(404).json({ message: 'User not found' });
+                }
+
+                res.status(200).json({ message: 'Profile picture updated successfully' });
+            } catch (error) {
+                console.error('Error updating profile picture:', error);
                 res.status(500).json({ message: 'Server error', error: error.message });
             }
         });
